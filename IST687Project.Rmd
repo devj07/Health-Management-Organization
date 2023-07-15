@@ -1,0 +1,458 @@
+# Forecasting High-Cost Healthcare Clients
+
+By Tarun Talreja, Yash Wadhawe, Maulik Ramnani, Dev Jindani, Achala Rao, and Aditya Kulkarni \| Group 3
+
+## [**Project Goal:**]{.underline}
+
+1.  The overall goal of the case is to provide actionable insight, based on the data available, as well as accurately predict which people (customers) will be expensive.
+
+2.  The data set contains healthcare cost information from an HMO (Health Management Organization). Each row in the data set represents a person.
+
+3.  The goal for our team is to understand the key drivers for why some people are more expensive (i.e. require more health care), as well as predict which people will be expensive (in terms of health care costs).
+
+    Hence, we have two goals:
+
+    1.  Predict people who will spend a lot of money on health care next year (i.e., which people will have high healthcare costs).
+    2.  Provide actionable insight to HMO, in terms of how to lower their total health care costs, by providing a specific recommendation on how to lower health care costs.
+
+**Project Deliverables:**
+
+The analysis includes exploratory analysis (EDA) (e.g. histograms, scatter plots), mapping visualizations and several machine learning techniques.
+
+**Data:**
+
+The data file can be located at: <https://intro-datascience.s3.us-east-2.amazonaws.com/HMO_data.csv>
+
+```{r}
+# Importing the necessary library
+library(tidyverse)
+
+# Reading in a CSV file from a remote location and storing it in a data frame called datafile
+datafile <- read.csv("https://intro-datascience.s3.us-east-2.amazonaws.com/HMO_data.csv")
+
+# Looking at the dataset
+str(datafile)
+```
+
+# Summarizing the Data and checking the statistics of columns in the data frame
+
+```{r}
+# Using summary() function to get statistical descriptions of all the columns
+summary(datafile)
+```
+
+# Summary of the Data Frame
+
+Age:
+
+-   Mean - 39
+
+-   Median - 39
+
+-   1st Quantile - 26
+
+-   3rd Quantile - 51
+
+BMI:
+
+-   Mean - 30.8
+
+-   Median - 30.5
+
+-   1st Quantile - 26.6
+
+-   3rd Quantile - 35.77
+
+Cost:
+
+-   Mean - 4043
+
+-   Median - 2500
+
+-   1st Quantile - 970
+
+-   3rd Quantile - 4775
+
+Children:
+
+-   Mean - 1
+
+-   Median - 1
+
+# Data Cleaning
+
+Our team has discovered a few missing values within the dataset. To begin with, we'll determine which columns contain NAs. Afterward, we will decide on an appropriate course of action, either substituting the missing values with the column's mean or eliminating rows containing NAs, depending on the most suitable strategy.
+
+```{r}
+# Using is.na() on every column to check for NA values 
+
+sum(is.na(datafile$age))
+sum(is.na(datafile$bmi))
+sum(is.na(datafile$children))
+sum(is.na(datafile$smoker))
+sum(is.na(datafile$location))
+sum(is.na(datafile$location_type))
+sum(is.na(datafile$education_level))
+sum(is.na(datafile$yearly_physical))
+sum(is.na(datafile$exercise))
+sum(is.na(datafile$married))
+sum(is.na(datafile$hypertension))
+sum(is.na(datafile$gender))
+sum(is.na(datafile$cost))
+```
+
+As per our code, there are missing values present in BMI and hypertension columns. Hypertension is a binary data type column, we cannot replace missing values with mean or na_interpolation. So, the best strategy is to delete the rows.
+
+BMI, however, is a continuous value type column, we can use na_interpolation to substitute the NAs present in the column.
+
+```{r}
+# Importing relevant library
+library(imputeTS)
+
+# Using na_interpolation to replace the NAs in BMI
+datafile$bmi <- na_interpolation(datafile$bmi, option = "linear")
+
+# Deleting all rows where hypertension has NA
+datafile <- datafile[!is.na(datafile$hypertension),]
+
+# Checking if NAs are removed or replaced
+
+sum(is.na(datafile$bmi))
+sum(is.na(datafile$hypertension))
+
+# There are no NAs now, data seems to be ok
+
+# Creating a safe copy just in case of any trouble
+datafile_backup <- datafile
+
+```
+
+# Categorizing Expensive / Not Expensive
+
+In order to determine the threshold at which health insurance becomes too expensive for the healthcare company to cover, we should examine the distribution of costs in the available data using tools such as a box plot or histogram. Additionally, we should calculate the mean, median, and range of the cost data, as well as the quantile values, to gain a comprehensive understanding of the cost spread.
+
+```{r}
+boxplot(datafile$cost,
+  ylab = "cost",
+  main = "Boxplot of healthcare cost"
+)
+text(y=fivenum(datafile$cost),labels=fivenum(datafile$cost),x=1.25)
+```
+
+The outliers seems to start from the cost value of 10,000
+
+```{r}
+quantile(datafile$cost, probs = c(0.25,0.5,0.75,1))
+# The values between 75th% and 100% have a huge difference
+
+quantile(datafile$cost,probs = seq(from=0.7,to=1,by=0.05))
+# Huge jump in the value appears to rise exponentially after the 75th quantile
+
+mean(datafile$cost)
+# the mean is around the 70th quantile 
+
+range(datafile$cost)
+```
+
+So it is safe to decide the cap cost at 75th quantile or \$4778. Now, we add a binary column for expensive and not expensive customers.
+
+```{r}
+datafile$expensive <- datafile$cost > 4778
+
+# Saving this dataframe to duplicate data
+datafile_backup <- datafile
+```
+
+# Grouping BMI and Age
+
+```{r}
+#Groups for bmi and age 
+min(datafile$age) #18
+max(datafile$age) #66
+datafile$age_grouped <- cut(datafile$age, breaks = seq(10,70,10)) #from 10, to 70, 10 width
+table((datafile$age_grouped))
+
+min(datafile$bmi) #15.96
+max(datafile$bmi) #53.13
+datafile$bmi_grouped <- cut(datafile$bmi, breaks = seq(15,60,10)) #from 15, to 60, 10 width
+table(datafile$bmi_grouped)
+```
+
+```{r}
+# Backing up the data
+datafile_backup <- datafile
+```
+
+# Exploratory Data Analysis
+
+Now, we can try visualizing the chart and find any relationships between the cost with each attribute
+
+```{r}
+#distribution of genders
+library(ggplot2)
+hist(datafile$age, main = "Age Distribution", xlab = "Age", col = "cyan")
+```
+
+```{r}
+#Visualisation of cost
+hist(datafile$cost)
+```
+
+```{r}
+#visualize distribution of expensive
+plot_expensive <- ggplot(datafile, Beside = TRUE, aes(x=expensive)) + geom_bar()
+plot_expensive
+```
+
+```{r}
+# Graphing Scatter plots to understand correlation of factors
+
+# Importing the relevant library
+library(ggplot2)
+
+# age vs cost (smoker)
+ggplot(data=datafile_backup, aes(x=age, y=cost,colour = smoker)) + geom_point() +
+  geom_smooth(method = "lm")
+
+# age vs cost (exercise)
+ggplot(data=datafile_backup,aes(x=age, y=cost,colour = exercise))+ geom_point() +
+  geom_smooth(method = "lm")
+
+# bmi vs cost (smoker)
+ggplot(data=datafile_backup,aes(x=bmi, y=cost,colour = smoker,))+ geom_point() +
+  geom_smooth(method = "lm")
+
+# bmi vs cost (exercise)
+ggplot(data=datafile_backup,aes(x=bmi, y=cost,colour = exercise))+ geom_point() +
+  geom_smooth(method = "lm")
+```
+
+# Interpretation of Graphs
+
+The provided plots show how healthcare costs are correlated with age and BMI for different smoking and exercise habits.
+
+-   For smokers, healthcare costs tend to increase with age, indicating a positive correlation between age and healthcare costs.
+
+-   People who are inactive have higher healthcare costs and there are some anomalies in the data for active individuals when considering age and healthcare costs.
+
+-   BMI has a positive correlation with healthcare costs, with a stronger correlation for smokers. People who have high BMI and smoke are most likely to have higher healthcare costs.
+
+-   Individuals with an inactive lifestyle tend to have higher healthcare costs, while there are some anomalies in the data for active individuals when considering the correlation between BMI and healthcare costs.
+
+```{r}
+state_avg_cost <- datafile_backup %>%
+  group_by(location) %>%
+  summarise_at(vars(cost), list(name = mean)) %>%
+  arrange(desc(name))
+state_avg_cost
+```
+
+New York has the highest healthcare cost per average among all the states we have.
+
+```{r}
+state_wise_count <- datafile_backup %>%
+  count(location) %>%
+arrange(desc(n))
+
+state_wise_count
+```
+
+We have about 50% people from the state of Pennsylvania itself.
+
+```{r}
+us<-map_data("state")
+datafile_backup$location <- tolower(datafile_backup$location)
+m1 <- aggregate(datafile_backup$cost,by=list(datafile_backup$location),FUN=mean)
+m2 <- aggregate(datafile_backup$cost,by=list(datafile_backup$location),FUN=max)
+m3 <- aggregate(datafile_backup$cost,by=list(datafile_backup$location),FUN=min)
+m1 <- m1%>%rename(location=Group.1)
+m2 <- m2%>%rename(location=Group.1)
+aggmerge1 <- merge(m1,m2,by = "location" )
+m3 <- m3 %>% rename(location=Group.1)
+aggmerge2 <- merge(aggmerge1,m3,by= "location")
+aggmerge2 <- aggmerge2%>%rename(min=x,average=x.x,max=x.y)
+m4 <- aggmerge2[,c(2:4)]
+usmerge <- merge(us,aggmerge2,all.x=TRUE,by.x="region",by.y="location")
+usmerge <- usmerge%>%arrange(order)
+
+usmap1 <- ggplot(usmerge) + geom_polygon(aes(x=long, y=lat, group=group, fill = average), color="grey") + coord_map()
+usmap1
+```
+
+-   New York has the highest average health care costs for individuals
+
+-   with 50% data representing Pennsylvania it still has the 4th highest average health care cost.
+
+-   Maryland has the lowest average health care cost for individuals.
+
+It is evident that age and bmi has a positive correlation with healthcare cost of a customer. Children doesn't have a strong correlation with cost.
+
+Now that we have an attribute that identifies expensive healthcare, we can generate plots for bmi, age, exercise and hypertension
+
+```{r}
+ggplot(datafile, aes(x = bmi, fill = expensive)) + 
+  geom_histogram() +
+  scale_fill_manual(values = c("TRUE" = "lightyellow",
+                               "FALSE" = "lightblue1"))+
+  theme_dark()
+
+ggplot(datafile, aes(x = age, fill = expensive)) + 
+  geom_histogram() +
+  scale_fill_manual(values = c("TRUE" = "tan1",
+                               "FALSE" = "lightgreen"))
+  
+ggplot(datafile, aes(x = exercise, fill = expensive)) + 
+  geom_histogram(stat="count",binwidth = 10)
+```
+
+# Interpretation of the Graphs
+
+-   bmi vs expensive: the variation of count of expensive people with increasing bmi is high.
+
+-   age vs expensive: the variation is visible with age as well.
+
+-   exercise vs expensive: the number of expensive people for non active lifestyle is pretty high, the same is also observed with active people. This does not provide a clear difference with exercise and expensive or non expensive people.
+
+# Prediction Model
+
+To predict if a customer is Expensive or Not Expensive for a Health Care Company, we can try to create a Support Vector Machine model for our prediction. Before that we will have to change all the object columns to factors.
+
+```{r}
+# import kernlab and caret libraries to environment
+library(kernlab)
+library(caret)
+library(e1071)
+
+# check which columns are chr objects
+str(datafile)
+
+
+# change "chr" columns to "factor"
+# use as. factor to change data type of column
+
+datafile$smoker <- as.factor(datafile$smoker)
+datafile$location <- as.factor(datafile$location)
+datafile$location_type <- as.factor(datafile$location_type)
+datafile$education_level <- as.factor(datafile$education_level)
+datafile$yearly_physical <- as.factor(datafile$yearly_physical)
+datafile$exercise <- as.factor(datafile$exercise)
+datafile$married <- as.factor(datafile$married)
+datafile$gender <- as.factor(datafile$gender)
+datafile$expensive <- as.factor(datafile$expensive)
+
+# Removing Cost Column for prediction
+datafile <- datafile[,-14]
+```
+
+Now that our columns are factorized we can split the data for training and testing.
+
+```{r}
+set.seed(123)
+
+# Randomly allocate data into training and testing by createDataPartition variable
+
+train_list <- createDataPartition(y=datafile$expensive,p=.70, list=FALSE)
+train_df <- datafile[train_list,]
+test_df <- datafile[-train_list,]
+```
+
+```{r}
+# Creating a SVM Model
+ksvm1 <- ksvm(expensive ~ ., data=train_df,C = 1,cross = 3, prob.model = TRUE)
+ksvm1
+
+# predicting the values of the test subset we created for model validation
+svmPred <- predict(ksvm1, test_df, type = "response")
+
+
+# creating a confusion matrix of the predicted values
+confMat <- confusionMatrix(svmPred, test_df$expensive)
+confMat
+```
+
+```{r}
+summary(svmPred)
+```
+
+# R-Part \| Decision Tree
+
+We will make a decision tree to understand the outcome of each variable and understand how everything factors to the choices an individual makes.
+
+```{r}
+#install.packages("rpart.plot")
+#install.packages("e1071")
+library(rpart.plot)
+library(rpart)
+library(caret)
+library(imputeTS)
+
+datafile$bmi <- na_interpolation(datafile$bmi)
+datafile$hypertension <- na_interpolation(datafile$hypertension)
+datafile$expensive <- as.factor(datafile$expensive)
+trainList <- createDataPartition(y=datafile$expensive,p=0.70,list=FALSE)
+trainSet <- datafile[trainList, ]
+testSet <- datafile[-trainList, ]
+
+cartTree <- rpart(expensive ~ ., data = trainSet)
+prp(cartTree, faclen = 0, cex = 0.8, extra = 1)
+rpart.plot(cartTree, main = "expensive\n(binary response)")
+predictValues <- predict(cartTree, newdata=testSet, type = "class")
+confMatrix <- confusionMatrix(testSet$expensive, predictValues)
+confMatrix
+```
+
+# Association Rules
+
+We also need to find trends on why health care costs a subset of customers expensive.
+
+For this purpose we will explore Association Rules to define rules leading to expensive cost
+
+-   We need to remove index column from the train_set data frame
+
+-   Change numerical columns to factor data type
+
+```{r}
+assoc_data <-datafile[,-1]
+
+assoc_data$age <- as.factor(assoc_data$age)
+assoc_data$bmi <- as.factor(assoc_data$bmi)
+assoc_data$children <- as.factor(assoc_data$children)
+assoc_data$hypertension <- as.factor(assoc_data$hypertension)
+
+str(assoc_data)
+```
+
+-   Import required libraries (arules, arulesViz)
+
+-   Change data into transaction
+
+-   Create apriori function to generate rules
+
+```{r}
+
+library(arules)
+library(arulesViz)
+
+tranData <- as(assoc_data, "transactions")
+
+
+itemFrequencyPlot(tranData, topN=20)
+
+# Rules
+rules <- apriori(tranData,
+                   parameter=list(supp=0.060, conf=0.82),
+                   control=list(verbose=F), # control algorithm performance
+                   appearance=list(default="lhs",rhs=("expensive=TRUE")))
+summary(rules)
+inspect(rules)
+
+View(assoc_data)
+```
+
+With Support = 0.065 and Confidence = 0.80, we are able to generate association rules for condition where cost is expensive.
+
+-   Smoker = yes and exercise = Not-Active for all 4 rules.
+
+-   Hypertension didn't seem to increase health care cost.
+
+-   Gender and education level are all observed once.
